@@ -22,12 +22,12 @@
 
 3. После проверки, залез в /etc/ssh/sshd_config и закинул параметры:
  
- ```
+     ```
     PasswordAuthentication no
     PermitRootLogin no
     PubkeyAuthentication yes
 
- ```
+    ```
 4. Ребутнул сервис ssh
 
     ``` 
