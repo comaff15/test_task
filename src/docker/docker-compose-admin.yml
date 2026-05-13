@@ -1,0 +1,25 @@
+# This docker-compose file is used to run the project's published image
+#
+# Usage: docker-compose up [-d]
+#
+# See comment in docker-compose.dev.yml if you want to run for development.
+
+version: "3.4"
+
+networks:
+  reaction:
+    external:
+      name: reaction.localhost
+
+services:
+  reaction-admin:
+    image: reactioncommerce/admin:4.0.0-beta.20
+    env_file:
+      - ./.env
+    networks:
+      default:
+      reaction:
+    ports:
+      - "4080:4080"
+      - "9231:9229"
+    restart: unless-stopped
