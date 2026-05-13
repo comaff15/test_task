@@ -67,6 +67,7 @@ SSH     TCP         2222        22
     ```
 Скрипт:
 ![Curl](./src/imgs/output_tree_with_script.png)
+
 Запуск скрипта:
 ![Запуск скрипта](./src/imgs/install_sricpt.png)
 
@@ -81,7 +82,8 @@ SSH     TCP         2222        22
     sudo usermod -aG docker user
     groups user
     ```
-Вывод команды groups user: ![Проверка групп юзера](./src/imgs/user_groups.png)
+Вывод команды groups user: 
+![Проверка групп юзера](./src/imgs/user_groups.png)
 
 4. Запуск и проверка работы docker с помощью тестового hello-world контейнера
 
