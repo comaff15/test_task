@@ -11,7 +11,7 @@ SSH     TCP         2222        22
 
 ### Настройка sshd
 
-1. СОздал юзера и закинул его в группу *sudo*
+1. Cоздал юзера и закинул его в группу *sudo*
     ```
     sudo useradd -m -s /bin/bash user
     sudo usermod -aG sudo user 
@@ -26,7 +26,7 @@ SSH     TCP         2222        22
     ssh-keygen -t rsa -b 4096 
     ```
 *Данная команда* генерирует ключ пару публичный ключ *pab* и приватный ключ *rsa*
-![Ключ-пара](./src/imgs/keys.png)
+Ключ пара на хосте, выглядит следующим образом: ![Ключ-пара](./src/imgs/keys.png)
 
 4. Закинул pab ключ на виртуалку в папку .ssh в хоум директории
     ``` 
@@ -50,7 +50,7 @@ SSH     TCP         2222        22
     ```
     ssh -p 2222 user@127.0.0.1
     ```
-![Итоговый результат](./src/imgs/1_step_results.png)
+Вывод по сервисам: ![Итоговый результат](./src/imgs/1_step_results.png)
 
 
 ### Настройка контейнеров
@@ -62,21 +62,21 @@ SSH     TCP         2222        22
     curl -fsSL https://get.docker.com -o get-docker.sh
     sudo sh ./get-docker.sh --dry-run
     ```
-![Curl](./src/imgs/output_tree_with_script.png)
-![Запуск скрипта](./src/imgs/install_sricpt.png)
+Скрипт: ![Curl](./src/imgs/output_tree_with_script.png)
+Запуск скрипта: ![Запуск скрипта](./src/imgs/install_sricpt.png)
 
 2. Проверил состояние докер демона
     ```
     sudo systemctl status docker
     ```
-![Демон](./src/imgs/docker_service.png)
+Докер демон: ![Демон](./src/imgs/docker_service.png)
 
 3. Закинул юзера в группу докера
     ```
     sudo usermod -aG docker user
     groups user
     ```
-![Проверка групп юзера](./src/imgs/user_groups.png)
+Вывод команды groups user: ![Проверка групп юзера](./src/imgs/user_groups.png)
 
 4. Запуск и проверка работы docker с помощью тестового hello-world контейнера
 
@@ -85,4 +85,4 @@ SSH     TCP         2222        22
     docker ps -a 
     ```
 Первая команда пулит имдж и запускает контейнер, вторая в свою очередь показывает статус по всем контейнерам
-![Тест и проверка докера](./src/imgs/docker_hello.png)
+ Тест прогон и проверка отработки: ![Тест и проверка докера](./src/imgs/docker_hello.png)
