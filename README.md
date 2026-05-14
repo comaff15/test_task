@@ -218,7 +218,7 @@ SSH     TCP         2222        22
     ```
     sudo nginx -t
     ```
-![Nginx check syntax](./src/imgs/nginxt.png)
+    ![Nginx check syntax](./src/imgs/nginxt.png)
 Далее рестартим nginx через ```sudo systemctl restart nginx```, что бы сервер подхватил изменения
 
 7. Далее необходимо открыть http порты в ufw
@@ -227,17 +227,18 @@ SSH     TCP         2222        22
     ufw allow 8080/tcp
     ```
 Эта команда откроет 80 и 8080 поры:
-![UFW 80](./src/imgs/firewall_www_db.png)
+    ![UFW 80](./src/imgs/firewall_www_db.png)
+
 8. Проверяем что все работает на 
     ```
     localhost
     localhost:8080
     ```
-Резульатом, браузер открывает все по портам 80 и 8080, соответсвенно nginx все проксирует корректно
-![UFW 80](./src/imgs/nginx_admin.png)
-![UFW 80](./src/imgs/nginx_front.png)
+    Резульатом, браузер открывает все по портам 80 и 8080, соответсвенно nginx все проксирует корректно
+    ![UFW 80](./src/imgs/nginx_admin.png)
+    ![UFW 80](./src/imgs/nginx_front.png)
 
 Так же по заданию докидываем в продукт доп картинку
-![UFW 80](./src/imgs/second_ing_admin.png)
-![UFW 80](./src/imgs/second_img_user.png)
+    ![UFW 80](./src/imgs/second_ing_admin.png)
+    ![UFW 80](./src/imgs/second_img_user.png)
 
