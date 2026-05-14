@@ -1,0 +1,20 @@
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y gnupg curl ca-certificates && \
+    curl -fsSL https://pgp.mongodb.com/server-4.4.asc | gpg --dearmor -o /usr/share/keyrings/mongodb.gpg && \
+    echo "deb [ arch=amd64 signed-by=/usr/share/keyrings/mongodb.gpg ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse" > /etc/apt/sources.list.d/mongodb-org.list && \
+    apt-get update && \
+    apt-get install -y mongodb-org && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /data/db
+
+VOLUME ["/data/db"]
+
+EXPOSE 27017
+
+CMD ["mongod", "--bind_ip_all"]

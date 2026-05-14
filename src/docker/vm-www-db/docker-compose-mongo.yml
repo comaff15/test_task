@@ -1,0 +1,20 @@
+services:
+  mongo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: mongo-vm-ww-db
+
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - mongo-data:/data/db
+
+    restart: unless-stopped
+
+    command: mongod --bind_ip_all
+
+volumes:
+  mongo-data:
