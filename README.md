@@ -241,5 +241,3 @@ SSH     TCP         2222        22
 ![UFW 80](./src/imgs/second_ing_admin.png)
 ![UFW 80](./src/imgs/second_img_user.png)
 
->ssh -p 2223 admindb@127.0.0.1 
->ssh -p 2222 user@127.0.0.1 
