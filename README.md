@@ -242,3 +242,18 @@ SSH     TCP         2222        22
     ![UFW 80](./src/imgs/second_ing_admin.png)
     ![UFW 80](./src/imgs/second_img_user.png)
 
+### Перенос баз данных mongodb с vm-app на vm-www-db
+
+1. Командой ```docker ps``` узнаем имя контейнера который крутит mongodb.
+   И переходим к дампу базы данных, делается следующим образом:
+    ```
+    docker exec e7bdfd820817_reaction-mongo-1 mongodump --out /dump
+    ```
+    Данная команда сделает дамп внтури контейнера, что бы вытащить эту папку, необходимо скопировать ее на вмку
+    ```
+    docker cp e7bdfd820817_reaction-mongo-1:/dump ./mongodb_dump
+    ```
+    ![UFW 80](./src/imgs/dump_cp.png)
+
+    После чего сносим внутри контейнера папку с дампом:
+    ```docker exec e7bdfd820817_reaction-mongo-1 rm -rf /dump```
