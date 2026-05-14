@@ -257,3 +257,26 @@ SSH     TCP         2222        22
 
     После чего сносим внутри контейнера папку с дампом:
     ```docker exec e7bdfd820817_reaction-mongo-1 rm -rf /dump```
+
+2. Как только мы сделали дамп данных, надо scpшнуть на хост папку с эими самыми данными:
+    ```
+    scp -P 2222 -r user@localhost:~/mongodb_dump ./mongodb_dump
+    ```
+   Далее перекидываем с хоста папку на vm-www-db:
+    ```
+    scp -P 2223 -r ./mongodb_dump admindb@127.0.0.1:~/
+    ```
+    ![UFW 80](./src/imgs/dump_vm_www.png)
+3. Переходим к восстановлению бдхи на VM-www-db, поскольку у нас уже был запущен контейнер c mongodb, мы копируем в него дамп
+    ```
+    docker cp ~/mongodb_dump mongo-vm-ww-db:/dump
+    ```
+    ![Dump](./src/imgs/dump_scp_restore.png)
+
+    Далее делаем востановление через mongorestore внутри докер контейнера:
+
+    ```
+    docker exec mongo-vm-ww-db mongorestore --drop /dump
+    ```
+    Флаг --drop, дает гарантию что при востановление бдхи будут идентичны, посколько сносит существующие колекции перед востановлением
+    ![Dump](./src/imgs/dump_restore.png)
