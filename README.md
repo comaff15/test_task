@@ -307,3 +307,464 @@ SSH     TCP         2222        22
     После всего, идем в браузер и смотрим, как ведет себя приложение, в моем случае изменений не было
 
 Резюмируя, сервисы общаются с БД следующим образом: приложения reaction и reaction-admin, запущенные на VM-app, подключаются к MongoDB по адресу 10.0.2.2:27019. Этот адрес является шлюзом NAT и ведёт на хост-машину. На хосте настроен проброс порта 127.0.0.1:27019 → VM-www-db:27017, поэтому весь трафик автоматически перенаправляется на целевой контейнер с MongoDB, работающий на VM-www-db.
+
+### Настрока ssl
+1. Создаем папку под ssl и настраиваем ей права
+    ```
+    sudo mkdir -p /etc/ssl/private
+    sudo chmod 755 /etc/ssl/private
+    ```
+2. Генерируем ключ-пару через openssl:
+
+    ```
+    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/nginx-selfsigned.key \
+        -out /etc/ssl/certs/nginx-selfsigned.crt \
+        -subj "/CN=localhost"
+    ```
+    Пояснение параметров:
+        -x509 — создает самоподписанный сертификат;
+        -nodes — создает ключ без парольной фразы;
+        -days 365 — срок действия 1 год;
+        -subj "/CN=localhost" — задает Common Name (ваш IP или домен).
+        -Сертификат: /etc/ssl/certs/nginx-selfsigned.crt
+        -Приватный ключ: /etc/ssl/private/nginx-selfsigned.key
+
+3. Меняем конфиг nginx для работы с ssl и редиректом, переходим в */etc/nginx/sites-available/proxy.conf* и меняем конфигурацию следующим образом:
+    ```
+    server {
+        listen 80;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name _;
+
+        # SSL сертификаты
+        ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+        ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+        # Настройки SSL
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        # User front
+        location / {
+            proxy_pass http://10.0.2.2:4000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+    server {
+        listen 8443 ssl http2;
+        server_name _;
+
+        # SSL сертификаты
+        ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+        ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+        # Настройки SSL
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        location / {
+            proxy_pass http://10.0.2.2:4080;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Accept-Encoding "";
+
+            proxy_buffer_size 256k;
+            proxy_buffers 8 512k;
+            proxy_busy_buffers_size 512k;
+            proxy_temp_file_write_size 512k;
+        }
+    }
+    ```
+    Проверям синтаксис и перезапускаем nignx
+    ```
+        nxinx -t
+        sudo systemctl restart nginx
+    ```
+
+    Пробрасываем порты в фаерволе
+    ```
+    sudo ufw allow 443/tcp
+    sudo ufw allow 8443/tcp
+    ```
+
+    Смотрим все ли работает в браузере:
+    ![Dump](./src/imgs/certs.png)
+
+
+### Настрока сбора логов с контейнеров
+1. Для сборки и анализа логов будет использоваться rsyslog. Первым делом создаем папки для хранения логов:
+    ```
+    sudo mkdir -p /var/log/central/{vm-app,vm-www-db}
+    sudo mkdir -p /var/log/central/services/{reaction-api,reaction-admin,storefront,mongodb}
+    ```
+2. Далее создаем файл конфигурации для VM-app
+
+    ```
+    sudo nano /etc/rsyslog.d/99-central.conf
+    ```
+
+    Файл конфигурации:
+    ```
+    module(load="imudp")
+    module(load="imtcp")
+
+    input(type="imudp" port="514" address="0.0.0.0")
+    input(type="imtcp" port="514" address="0.0.0.0")
+
+    $template StructuredFormat,"%HOSTNAME% | %syslogtag% | %syslogseverity-text% | %msg%\\n"
+
+    # Шаблоны
+    $template ReactionAPILog,"/var/log/central/services/reaction-api/reaction-api.log"
+    $template ReactionAdminLog,"/var/log/central/services/reaction-admin/reaction-admin.log"
+    $template StorefrontLog,"/var/log/central/services/storefront/storefront.log"
+    $template MongoLog,"/var/log/central/services/mongodb/mongodb.log"
+    $template VMAppLog,"/var/log/central/vm-app/system.log"
+    $template VMWwwDbLog,"/var/log/central/vm-www-db/system.log"
+
+    # VM-www-db
+    if $hostname == 'vmwwwdb' then {
+        # MongoDB контейнер
+        if $msg contains 'mongodb' or $msg contains 'MongoDB' or $programname contains 'mongo' then {
+            action(type="omfile" file="/var/log/central/services/mongodb/mongodb.log" template="StructuredFormat")
+        } else {
+            # Остальные логи VM-www-db
+            action(type="omfile" file="/var/log/central/vm-www-db/system.log" template="StructuredFormat")
+        }
+        stop
+    }
+
+    # VM-app
+    if $hostname == 'vmapp' then {
+        # Reaction API
+        if $msg contains 'reaction-api' or $programname contains 'reaction-api' then {
+            action(type="omfile" file="/var/log/central/services/reaction-api/reaction-api.log" template="StructuredFormat")
+        }
+        # Reaction Admin
+        else if $msg contains 'reaction-admin' or $programname contains 'reaction-admin' then {
+            action(type="omfile" file="/var/log/central/services/reaction-admin/reaction-admin.log" template="StructuredFormat")
+        }
+        # Storefront
+        else if $msg contains 'storefront' or $programname contains 'storefront' then {
+            action(type="omfile" file="/var/log/central/services/storefront/storefront.log" template="StructuredFormat")
+        }
+        # MongoDB на VM-app
+        else if $msg contains 'mongodb' or $programname contains 'mongo' then {
+            action(type="omfile" file="/var/log/central/services/mongodb/mongodb-app.log" template="StructuredFormat")
+        }
+        else {
+            # Остальные логи VM-app
+            action(type="omfile" file="/var/log/central/vm-app/system.log" template="StructuredFormat")
+        }
+        stop
+    }
+
+    *.* action(type="omfile" file="/var/log/central/other.log" template="StructuredFormat")
+    ```
+3. Создадим файл конфигурации для vm-www-db,  */etc/rsyslog.d/99-forward.conf*, конфиг выглядит следующим образом:
+
+    ```
+    *.* @@10.0.2.2:514
+    $PreserveFQDN on
+    ```
+
+    Этот темплейт отправляет логи на vm-app с сохраненем hostname
+
+4. Далее на обоих машинах необходимо настроить */etc/docker/daemon.json*, добавив в него следующее:
+    ```
+    {
+        "log-driver": "syslog",
+        "log-opts": {
+            "syslog-address": "udp://localhost:514",
+            "tag": "{{.Name}}",
+            "labels": "com.docker.compose.service",
+            "syslog-facility": "daemon",
+            "syslog-format": "rfc5424"
+        }
+    }
+    ```
+    Далее ребутаем докер на обоих вмках и перезапускаем контейнеры, после чего проверяем подхватили ли они новый драйвер
+
+    ```
+    docker inspect --format='{{.Name}}: {{.HostConfig.LogConfig.Type}}' $(docker ps -aq)
+    ```
+
+    Вывод команды:
+    ![rsys](./src/imgs/rsys.png)`
+
+5. Проверяем логи через vm-app командой 
+    ```
+    sudo tail -f /var/log/syslog | grep -E "reaction-api|reaction-admin|storefront|mongo"
+    ```
+
+    ![Logs](./src/imgs/lofs.png)
+
+### Утилиты для анализа системных ресурсов
+
+Для анализа CPU/RAM htop 
+![Logs](./src/imgs/htop.png)
+
+Для анализа всего остального nmon
+
+Диски:
+![Logs](./src/imgs/nmon_disks.png)
+
+Сеть:
+![Logs](./src/imgs/nmon_n.png)
+
+### Создаем 3 вм и настраиваем реплика сет
+
+1.  Развернул VM-mongodb, настроил ssh, настроил docker, пробросил порты на вмке и фаерволе
+
+2. Поднял на основе Dockerfile и docker-compose файла еще один инстанс mongodb
+    ![Logs](./src/imgs/third_docker.png)
+
+3. Пробросил порты на VMки, таким образом что б при подключении все не всхлопнулось:
+    ```
+    vm-app      tcp     27017  -> 27017
+    vm-www-db   tcp     27019  -> 27017
+    vm-mongoap  tcp     27020  -> 27017
+    ```
+Данный проброс позволяет работать с репликасетом по NAT и не пробрасывать host-only сеть в virtual box
+
+    *Траблшутинг*
+    При первой инициализации была проблема с тем что mongodb поднимался с полным хаосом в параметре host, решением данной проблемы является удаление параметра *--replSet rs0* из Dockerfile в docker-compose конфигурацию, после чего на контейнера который поднялся первым уже проводим объеденение инстансов в репликасет
+
+
+3. Объеденяем инстансы в реплика сет
+    В качестве мастер ноды была выбрана VM-app. Открываем шелл и инициализируем реплика сет:
+    ```
+    docker exec -it reaction-mongo-1 mongo
+    rs.initiate()
+    ```
+    В моем случае, инициализация делается через докер файл, так что инициализация и так была
+    ![rs](./src/imgs/rs_init.png)
+
+    Докидываем в replica set остальные вмки:
+    ```
+    rs.add("10.0.2.2:27019")
+    rs.add("10.0.2.2:27020")
+
+    ```
+    
+    Командой rs.status() проверяем как прошло добавление инстансов. Вывод команды при успешном выполнении следующий:
+    ```
+    rs0:SECONDARY> rs.status()
+        {
+                "set" : "rs0",
+                "date" : ISODate("2026-05-17T09:29:52.652Z"),
+                "myState" : 2,
+                "term" : NumberLong(1),
+                "syncSourceHost" : "10.0.2.2:27017",
+                "syncSourceId" : 1,
+                "heartbeatIntervalMillis" : NumberLong(2000),
+                "majorityVoteCount" : 2,
+                "writeMajorityCount" : 2,
+                "votingMembersCount" : 3,
+                "writableVotingMembersCount" : 3,
+                "optimes" : {
+                        "lastCommittedOpTime" : {
+                                "ts" : Timestamp(1779010185, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "lastCommittedWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                        "readConcernMajorityOpTime" : {
+                                "ts" : Timestamp(1779010185, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "readConcernMajorityWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                        "appliedOpTime" : {
+                                "ts" : Timestamp(1779010185, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "durableOpTime" : {
+                                "ts" : Timestamp(1779010185, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "lastAppliedWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                        "lastDurableWallTime" : ISODate("2026-05-17T09:29:45.176Z")
+                },
+                "lastStableRecoveryTimestamp" : Timestamp(1779010185, 1),
+                "members" : [
+                        {
+                                "_id" : 0,
+                                "name" : "10.0.2.2:27019",
+                                "health" : 1,
+                                "state" : 1,
+                                "stateStr" : "PRIMARY",
+                                "uptime" : 968,
+                                "optime" : {
+                                        "ts" : Timestamp(1779010185, 1),
+                                        "t" : NumberLong(1)
+                                },
+                                "optimeDurable" : {
+                                        "ts" : Timestamp(1779010185, 1),
+                                        "t" : NumberLong(1)
+                                },
+                                "optimeDate" : ISODate("2026-05-17T09:29:45Z"),
+                                "optimeDurableDate" : ISODate("2026-05-17T09:29:45Z"),
+                                "lastAppliedWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                                "lastDurableWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                                "lastHeartbeat" : ISODate("2026-05-17T09:29:52.567Z"),
+                                "lastHeartbeatRecv" : ISODate("2026-05-17T09:29:50.756Z"),
+                                "pingMs" : NumberLong(2),
+                                "lastHeartbeatMessage" : "",
+                                "syncSourceHost" : "",
+                                "syncSourceId" : -1,
+                                "infoMessage" : "",
+                                "electionTime" : Timestamp(1779008894, 2),
+                                "electionDate" : ISODate("2026-05-17T09:08:14Z"),
+                                "configVersion" : 3,
+                                "configTerm" : 1
+                        },
+                        {
+                                "_id" : 1,
+                                "name" : "10.0.2.2:27017",
+                                "health" : 1,
+                                "state" : 2,
+                                "stateStr" : "SECONDARY",
+                                "uptime" : 968,
+                                "optime" : {
+                                        "ts" : Timestamp(1779010185, 1),
+                                        "t" : NumberLong(1)
+                                },
+                                "optimeDurable" : {
+                                        "ts" : Timestamp(1779010185, 1),
+                                        "t" : NumberLong(1)
+                                },
+                                "optimeDate" : ISODate("2026-05-17T09:29:45Z"),
+                                "optimeDurableDate" : ISODate("2026-05-17T09:29:45Z"),
+                                "lastAppliedWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                                "lastDurableWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                                "lastHeartbeat" : ISODate("2026-05-17T09:29:52.604Z"),
+                                "lastHeartbeatRecv" : ISODate("2026-05-17T09:29:52.063Z"),
+                                "pingMs" : NumberLong(2),
+                                "lastHeartbeatMessage" : "",
+                                "syncSourceHost" : "10.0.2.2:27019",
+                                "syncSourceId" : 0,
+                                "infoMessage" : "",
+                                "configVersion" : 3,
+                                "configTerm" : 1
+                        },
+                        {
+                                "_id" : 2,
+                                "name" : "10.0.2.2:27020",
+                                "health" : 1,
+                                "state" : 2,
+                                "stateStr" : "SECONDARY",
+                                "uptime" : 1226,
+                                "optime" : {
+                                        "ts" : Timestamp(1779010185, 1),
+                                        "t" : NumberLong(1)
+                                },
+                                "optimeDate" : ISODate("2026-05-17T09:29:45Z"),
+                                "lastAppliedWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                                "lastDurableWallTime" : ISODate("2026-05-17T09:29:45.176Z"),
+                                "syncSourceHost" : "10.0.2.2:27017",
+                                "syncSourceId" : 1,
+                                "infoMessage" : "",
+                                "configVersion" : 3,
+                                "configTerm" : 1,
+                                "self" : true,
+                                "lastHeartbeatMessage" : ""
+                        }
+                ],
+                "ok" : 1,
+                "$clusterTime" : {
+                        "clusterTime" : Timestamp(1779010185, 1),
+                        "signature" : {
+                                "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                                "keyId" : NumberLong(0)
+                        }
+                },
+                "operationTime" : Timestamp(1779010185, 1)
+        }
+    ```
+    ![rs-init](./src/imgs/rs.png)
+
+    После чего в *.env* файлах пробрасываем репликасет. В нашем случае:
+    Для бэка:
+    ```
+    MONGO_URL=mongodb://10.0.2.2:27017,10.0.2.2:27019,10.0.2.2:27020/reaction?replicaSet=rs0
+    ```
+    Для админки:
+    ```
+    MONGO_URL=mongodb://10.0.2.2:27017,10.0.2.2:27019,10.0.2.2:27020/reaction?replicaSet=rs0
+    MONGO_OPLOG_URL=mongodb://10.0.2.2:27017,10.0.2.2:27019,10.0.2.2:27020/local?replicaSet=rs0
+    ```
+    Далее смотрим какая нода выступает в replicaset PRIMARY и роняем ее для проверки того, что реплика сет переключил управление на другую ноду, после чего проверяем приложение на работоспособность
+    ![rs-check](./src/imgs/rs-check.png)
+
+### Ограничение доступов по сети
+
+Для ограничения доступов из вне, будем юзать базовый фаервол ufw. Политика +- следующая:
+
+    - 22 порт доступен с любого ипишника
+    - бдшки только из под 10.0.2.2 на каждой вм
+    - http/https на vm-www-db - доступны с любого ипишника
+    - все остальное либо режектиться, либо доступно долько из под 10.0.2.2
+
+Итоговоый фаервол на вмках выглядит следующим образом:
+
+VM-app:
+```
+user@vmapp:~$ sudo ufw status verbose
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    Anywhere
+3000/tcp                   ALLOW IN    10.0.2.2
+4000/tcp                   ALLOW IN    10.0.2.2
+4080/tcp                   ALLOW IN    10.0.2.2
+27017/tcp                  ALLOW IN    10.0.2.2
+514/tcp                    ALLOW IN    10.0.2.2
+514/udp                    ALLOW IN    10.0.2.2
+```
+
+VM-www-db:
+```
+admindb@vmwwwdb:~$ sudo ufw status verbose
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    Anywhere
+80/tcp                     ALLOW IN    Anywhere
+8080/tcp                   ALLOW IN    Anywhere
+443/tcp                    ALLOW IN    Anywhere
+8443/tcp                   ALLOW IN    Anywhere
+27017/tcp                  ALLOW IN    10.0.2.2
+```
+
+VM-mongodb:
+```
+user@vmmongodb:~/docker$ sudo ufw status verbose
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    Anywhere
+27017/tcp                  ALLOW IN    10.0.2.2
+
+```
